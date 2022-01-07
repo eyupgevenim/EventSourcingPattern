@@ -1,0 +1,73 @@
+# docker-compose -f docker-compose.rabbitmq.yml up --build -d
+# https://hub.docker.com/r/bitnami/rabbitmq
+
+version: "3.4"
+
+networks:
+    app-tier:
+        driver: bridge
+
+services:
+    rabbitmq:
+        image: rabbitmq:3-management
+        container_name: rabbitmq
+        volumes:
+            - ./.docker/rabbitmq/etc/:/etc/rabbitmq/
+            - ./.docker/rabbitmq/data/:/var/lib/rabbitmq/
+            - ./.docker/rabbitmq/logs/:/var/log/rabbitmq/
+        environment:
+            - RABBITMQ_ERLANG_COOKIE=s3cr3tc00ki3
+            - RABBITMQ_DEFAULT_USER=user
+            - RABBITMQ_DEFAULT_PASS=password
+
+            #    RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERL_COOKIE}
+            # ...
+            #env_file:
+            #- .env
+        ports:
+            - 5672:5672
+            - 15672:15672
+        networks:
+            - app-tier
+
+    sample-producer-api:
+        build:
+            context: .
+            dockerfile: ./src/Services/Sample.Producer.API/Dockerfile
+        container_name: "Sample.Producer.API"
+        volumes:
+            - ./.docker/rabbitmq/Sample.Producer.API/Logs/:/app/Logs/
+        environment:
+            - ASPNETCORE_ENVIRONMENT=Development
+            - ASPNETCORE_URLS=http://0.0.0.0:80
+            - RabbitMQSettings__RABBITMQ_DEFAULT_USER=user
+            - RabbitMQSettings__RABBITMQ_DEFAULT_PASS=password
+            - RabbitMQSettings__RABBITMQ_HOSTNAME=rabbitmq
+            - RabbitMQSettings__RABBITMQ_SUBSCRIPTION_CLIENTNAME=testqueue
+        #env_file:
+        #    - .env
+        ports:
+            - 5001:80
+        networks:
+            - app-tier
+
+    sample-consumer-api:
+        build:
+            context: .
+            dockerfile: ./src/Services/Sample.Consumer.API/Dockerfile
+        container_name: "Sample.Consumer.API"
+        volumes:
+            - ./.docker/rabbitmq/Sample.Consumer.API/Logs/:/app/Logs/
+        environment:
+            - ASPNETCORE_ENVIRONMENT=Development
+            - ASPNETCORE_URLS=http://0.0.0.0:80
+            - RabbitMQSettings__RABBITMQ_DEFAULT_USER=user
+            - RabbitMQSettings__RABBITMQ_DEFAULT_PASS=password
+            - RabbitMQSettings__RABBITMQ_HOSTNAME=rabbitmq
+            - RabbitMQSettings__RABBITMQ_SUBSCRIPTION_CLIENTNAME=testqueue
+        #env_file:
+        #    - .env
+        ports:
+            - 5002:80
+        networks:
+            - app-tier
