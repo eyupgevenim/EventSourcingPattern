@@ -65,7 +65,8 @@ if (app.Environment.IsDevelopment())
 }
 
 var eventBus = app.Services.GetRequiredService<IEventBus>();
-eventBus.Subscribe<OrderStatusChangedIntegrationEvent, OrderStatusChangedIntegrationEventHandler>();
+//eventBus.Subscribe<OrderStatusChangedIntegrationEvent, OrderStatusChangedIntegrationEventHandler>();
+eventBus.SubscribeForAttribute(typeof(Program));
 
 app.UseStaticFiles();
 app.UseRouting();

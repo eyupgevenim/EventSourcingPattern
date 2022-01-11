@@ -4,14 +4,15 @@ using EventBus.Events;
 using EventBus.Extensions;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using Polly;
 using Polly.Retry;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 using System;
+using System.Linq;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -53,9 +54,7 @@ namespace EventBus.RabbitMQ
 
             using (var channel = _persistentConnection.CreateModel())
             {
-                channel.QueueUnbind(queue: _queueName,
-                    exchange: BROKER_NAME,
-                    routingKey: eventName);
+                channel.QueueUnbind(queue: _queueName, exchange: BROKER_NAME, routingKey: eventName);
 
                 if (_subsManager.IsEmpty)
                 {
@@ -99,18 +98,12 @@ namespace EventBus.RabbitMQ
 
                     _logger.LogTrace("Publishing event to RabbitMQ: {EventId}", @event.Id);
 
-                    channel.BasicPublish(
-                        exchange: BROKER_NAME,
-                        routingKey: eventName,
-                        mandatory: true,
-                        basicProperties: properties,
-                        body: body);
+                    channel.BasicPublish(exchange: BROKER_NAME, routingKey: eventName,  mandatory: true, basicProperties: properties, body: body);
                 });
             }
         }
 
-        public void SubscribeDynamic<TH>(string eventName)
-            where TH : IDynamicIntegrationEventHandler
+        public void SubscribeDynamic<TH>(string eventName) where TH : IDynamicIntegrationEventHandler
         {
             _logger.LogInformation("Subscribing to dynamic event {EventName} with {EventHandler}", eventName, typeof(TH).GetGenericTypeName());
 
@@ -119,9 +112,7 @@ namespace EventBus.RabbitMQ
             StartBasicConsume();
         }
 
-        public void Subscribe<T, TH>()
-            where T : IntegrationEvent
-            where TH : IIntegrationEventHandler<T>
+        public void Subscribe<T, TH>() where T : IntegrationEvent where TH : IIntegrationEventHandler<T>
         {
             var eventName = _subsManager.GetEventKey<T>();
             DoInternalSubscription(eventName);
@@ -130,6 +121,29 @@ namespace EventBus.RabbitMQ
 
             _subsManager.AddSubscription<T, TH>();
             StartBasicConsume();
+        }
+
+        public void SubscribeForAttribute(Type type)
+        {
+            var eventTypes = base.GetEventTypes(type);
+            if (!eventTypes.Any())
+            {
+                return;
+            }
+
+            foreach (var eventType in eventTypes)
+            {
+                DoInternalSubscription(eventType.Key);
+
+                _logger.LogInformation("Subscribing to event {EventName} with {EventHandler}", eventType.Key, string.Join(", ", eventType.Value.Select(m => m.Name)));
+
+                foreach (var methodInfo in eventType.Value)
+                {
+                    _subsManager.AddSubscriptionForAttribute(eventType.Key, methodInfo);
+                }
+            }
+
+            StartBasicConsumeForAttribute();
         }
 
         private void DoInternalSubscription(string eventName)
@@ -144,16 +158,12 @@ namespace EventBus.RabbitMQ
 
                 using (var channel = _persistentConnection.CreateModel())
                 {
-                    channel.QueueBind(queue: _queueName,
-                                      exchange: BROKER_NAME,
-                                      routingKey: eventName);
+                    channel.QueueBind(queue: _queueName, exchange: BROKER_NAME, routingKey: eventName);
                 }
             }
         }
 
-        public void Unsubscribe<T, TH>()
-            where T : IntegrationEvent
-            where TH : IIntegrationEventHandler<T>
+        public void Unsubscribe<T, TH>() where T : IntegrationEvent where TH : IIntegrationEventHandler<T>
         {
             var eventName = _subsManager.GetEventKey<T>();
 
@@ -162,8 +172,7 @@ namespace EventBus.RabbitMQ
             _subsManager.RemoveSubscription<T, TH>();
         }
 
-        public void UnsubscribeDynamic<TH>(string eventName)
-            where TH : IDynamicIntegrationEventHandler
+        public void UnsubscribeDynamic<TH>(string eventName) where TH : IDynamicIntegrationEventHandler
         {
             _subsManager.RemoveDynamicSubscription<TH>(eventName);
         }
@@ -188,10 +197,7 @@ namespace EventBus.RabbitMQ
 
                 consumer.Received += Consumer_Received;
 
-                _consumerChannel.BasicConsume(
-                    queue: _queueName,
-                    autoAck: false,
-                    consumer: consumer);
+                _consumerChannel.BasicConsume(queue: _queueName, autoAck: false, consumer: consumer);
             }
             else
             {
@@ -224,6 +230,49 @@ namespace EventBus.RabbitMQ
             _consumerChannel.BasicAck(eventArgs.DeliveryTag, multiple: false);
         }
 
+        private void StartBasicConsumeForAttribute()
+        {
+            _logger.LogTrace("Starting RabbitMQ basic consume");
+
+            if (_consumerChannel != null)
+            {
+                var consumer = new AsyncEventingBasicConsumer(_consumerChannel);
+
+                consumer.Received += Consumer_Received_ForAttribute;
+
+                _consumerChannel.BasicConsume(queue: _queueName, autoAck: false, consumer: consumer);
+            }
+            else
+            {
+                _logger.LogError("StartBasicConsume can't call on _consumerChannel == null");
+            }
+        }
+
+        private async Task Consumer_Received_ForAttribute(object sender, BasicDeliverEventArgs eventArgs)
+        {
+            var eventName = eventArgs.RoutingKey;
+            var message = Encoding.UTF8.GetString(eventArgs.Body.Span);
+
+            try
+            {
+                if (message.ToLowerInvariant().Contains("throw-fake-exception"))
+                {
+                    throw new InvalidOperationException($"Fake exception requested: \"{message}\"");
+                }
+
+                await base.ProcessEventForAttribute(eventName, message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "----- ERROR Processing message \"{Message}\"", message);
+            }
+
+            // Even on exception we take the message off the queue.
+            // in a REAL WORLD app this should be handled with a Dead Letter Exchange (DLX). 
+            // For more information see: https://www.rabbitmq.com/dlx.html
+            _consumerChannel.BasicAck(eventArgs.DeliveryTag, multiple: false);
+        }
+
         private IModel CreateConsumerChannel()
         {
             if (!_persistentConnection.IsConnected)
@@ -238,11 +287,7 @@ namespace EventBus.RabbitMQ
             channel.ExchangeDeclare(exchange: BROKER_NAME,
                                     type: "direct");
 
-            channel.QueueDeclare(queue: _queueName,
-                                 durable: true,
-                                 exclusive: false,
-                                 autoDelete: false,
-                                 arguments: null);
+            channel.QueueDeclare(queue: _queueName, durable: true, exclusive: false, autoDelete: false, arguments: null);
 
             channel.CallbackException += (sender, ea) =>
             {
@@ -255,5 +300,6 @@ namespace EventBus.RabbitMQ
 
             return channel;
         }
+        
     }
 }

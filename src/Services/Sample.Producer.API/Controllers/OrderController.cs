@@ -32,5 +32,19 @@
             return Ok();
         }
 
+        [HttpPost("CreateOrderPublish")]
+        public async Task<IActionResult> CreateOrderPublish(CreateOrderModel model)
+        {
+            //TODO:....
+
+            var @event = new CreateOrderIntegrationEvent(model.OrderId, model.Price);
+            eventBus.Publish(@event);
+
+            _logger.LogInformation("CreateOrderPublish - @event:{@event}", @event);
+            //TODO:..
+
+            return Ok();
+        }
+
     }
 }

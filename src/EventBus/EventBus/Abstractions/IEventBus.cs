@@ -1,4 +1,5 @@
-﻿using EventBus.Events;
+﻿using System;
+using EventBus.Events;
 
 namespace EventBus.Abstractions
 {
@@ -6,18 +7,14 @@ namespace EventBus.Abstractions
     {
         void Publish(IntegrationEvent @event);
 
-        void Subscribe<T, TH>()
-            where T : IntegrationEvent
-            where TH : IIntegrationEventHandler<T>;
+        void Subscribe<T, TH>() where T : IntegrationEvent where TH : IIntegrationEventHandler<T>;
 
-        void SubscribeDynamic<TH>(string eventName)
-            where TH : IDynamicIntegrationEventHandler;
+        void SubscribeForAttribute(Type type);
 
-        void UnsubscribeDynamic<TH>(string eventName)
-            where TH : IDynamicIntegrationEventHandler;
+        void SubscribeDynamic<TH>(string eventName) where TH : IDynamicIntegrationEventHandler;
 
-        void Unsubscribe<T, TH>()
-            where TH : IIntegrationEventHandler<T>
-            where T : IntegrationEvent;
+        void UnsubscribeDynamic<TH>(string eventName) where TH : IDynamicIntegrationEventHandler;
+
+        void Unsubscribe<T, TH>() where TH : IIntegrationEventHandler<T> where T : IntegrationEvent;
     }
 }
